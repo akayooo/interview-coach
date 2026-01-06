@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Interview Coach</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">IC</div>
+        <div>
+          <div class="title">Interview Coach</div>
+          <div class="subtitle" id="subtitle">Connecting…</div>
+        </div>
+      </div>
+
+      <div class="status">
+        <div class="pill" id="pillState">—</div>
+      </div>
+
+      <div class="topActions">
+        <button class="btn tiny" id="btnStart">Начать</button>
+        <button class="btn tiny ghost" id="btnNew">Новая сессия</button>
+        <button class="btn tiny ghost" id="btnDebug">Отладка</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="questionCard" id="questionCard">
+        <div class="qHeader">
+          <div class="qHeadMain">
+            <div class="qTitle" id="qTitle">Готовлю следующий вопрос…</div>
+            <div class="qMeta" id="qMeta">—</div>
+            <div class="qProgress" id="qProgress"></div>
+          </div>
+
+          <div class="qActions">
+            <button class="btn tiny ghost" id="btnToggleNotes">Показать конспект</button>
+          </div>
+        </div>
+
+        <div class="qBody" id="qBody">
+          <div class="skeleton">
+            <div class="sk sk1"></div>
+            <div class="sk sk2"></div>
+            <div class="sk sk3"></div>
+          </div>
+        </div>
+
+        <div class="qNotes hidden" id="qNotes"></div>
+      </section>
+
+      <section class="feedCard" id="feedCard">
+        <div class="feed" id="feed"></div>
+
+        <div class="composer">
+          <div class="hint" id="hint"></div>
+          <div class="composerRow">
+            <div class="leftTools">
+              <button class="btn ghost mic" id="btnMic" title="Voice input">🎙️</button>
+            </div>
+
+            <textarea id="input" class="input" rows="2" placeholder="Ответ…  (Ctrl+Enter / ⌘+Enter — отправить)"></textarea>
+
+            <div class="rightTools">
+              <button class="btn ghost" id="btnClear" title="Очистить">Очистить</button>
+              <button class="btn" id="btnSend">Отправить</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawerBackdrop hidden" id="drawerBackdrop"></div>
+  <aside class="drawer hidden" id="drawer">
+    <div class="drawerHeader">
+      <div class="drawerTitle">Отладка</div>
+      <button class="btn tiny ghost" id="btnCloseDebug">Закрыть</button>
+    </div>
+    <div class="drawerBody">
+      <div class="events" id="events"></div>
+      <div class="meta" id="meta"></div>
+    </div>
+  </aside>
+
+  <div class="drawerBackdrop hidden" id="sourcesBackdrop"></div>
+  <aside class="drawer hidden" id="sourcesDrawer">
+    <div class="drawerHeader">
+      <div class="drawerTitle">Выбор тем</div>
+      <button class="btn tiny ghost" id="btnCloseSources">Закрыть</button>
+    </div>
+    <div class="drawerBody">
+      <div class="sourceTitle">Выбери конспекты (опционально):</div>
+      <div class="pickerRow horizontal" id="sourcePicker"></div>
+    </div>
+  </aside>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

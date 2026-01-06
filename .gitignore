@@ -1,0 +1,4 @@
+runs/
+.env
+.obsidian
+DS_Store
