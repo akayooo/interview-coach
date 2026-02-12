@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Interview Coach</title>
   <link rel="stylesheet" href="/static/style.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css"/>
 </head>
 <body>
   <div class="wrap">
@@ -12,7 +13,7 @@
       <div class="brand">
         <div class="logo">IC</div>
         <div>
-          <div class="title">Interview Coach</div>
+          <div class="title">Interview <span class="script">Coach</span></div>
           <div class="subtitle" id="subtitle">Connecting…</div>
         </div>
       </div>
@@ -21,8 +22,18 @@
         <div class="pill" id="pillState">—</div>
       </div>
 
+      <div class="modeSwitch">
+        <span class="modeLabel" id="modeLabelSmart">Smart</span>
+        <label class="switch">
+          <input type="checkbox" id="modeToggle"/>
+          <span class="slider"></span>
+        </label>
+        <span class="modeLabel" id="modeLabelSimple">Simple</span>
+      </div>
+
       <div class="topActions">
         <button class="btn tiny" id="btnStart">Начать</button>
+        <button class="btn tiny ghost hidden" id="btnSkip">Пропустить</button>
         <button class="btn tiny ghost" id="btnNew">Новая сессия</button>
         <button class="btn tiny ghost" id="btnDebug">Отладка</button>
       </div>
@@ -94,13 +105,18 @@
       <button class="btn tiny ghost" id="btnCloseSources">Закрыть</button>
     </div>
     <div class="drawerBody">
-      <div class="sourceTitle">Выбери конспекты (опционально):</div>
+      <div class="sourceTitle" id="sourceTitle">Выбери конспекты (опционально):</div>
       <div class="pickerRow horizontal" id="sourcePicker"></div>
+      <div class="weightFooter hidden" id="weightFooter">
+        <div class="weightTotal">Итого: <span id="weightTotal">100%</span></div>
+        <div class="weightHint" id="weightHint">Сумма весов всегда 100%</div>
+      </div>
     </div>
   </aside>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
 
   <script src="/static/app.js"></script>
 </body>

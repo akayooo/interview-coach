@@ -3,11 +3,13 @@
 import os
 import glob
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 BULLET_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
 NUM_RE = re.compile(r"^\s*\d+[\.\)]\s+(.*)$")
+SIMPLE_Q_RE = re.compile(r"^#{3,4}\s*Вопрос\"?\s*(?::|-)?\s*\"?\s*(.*)$", re.IGNORECASE)
+SIMPLE_A_RE = re.compile(r"^\*{2}\s*Ответ\s*:?\s*\*{2}\s*(.*)$", re.IGNORECASE)
 
 def read_markdown_files(notes_dir: str) -> Dict[str, str]:
     """
@@ -88,6 +90,104 @@ def extract_questions(text: str) -> List[str]:
             seen.add(qn.lower())
             uniq.append(qn)
     return uniq
+
+def extract_simple_qas(text: str) -> List[Dict[str, str]]:
+    """
+    Extract question/answer pairs in the simplified format.
+
+    Args:
+        text: Markdown content to scan.
+
+    Returns:
+        List of dicts with keys "q", "a", and optional "subtopic".
+    """
+    qas: List[Dict[str, str]] = []
+    current_q: Optional[str] = None
+    answer_lines: List[str] = []
+    waiting_answer = False
+    current_subtopic: Optional[str] = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        heading = HEADING_RE.match(stripped)
+        if heading:
+            level = len(heading.group(1))
+            title = heading.group(2).strip()
+            m_q = SIMPLE_Q_RE.match(stripped)
+            if current_q:
+                if answer_lines:
+                    qas.append(
+                        {
+                            "q": current_q,
+                            "a": "\n".join(answer_lines).strip(),
+                            "subtopic": current_subtopic or "",
+                        }
+                    )
+                current_q = None
+                answer_lines = []
+                waiting_answer = False
+            if not m_q:
+                if level <= 2:
+                    current_subtopic = None
+                if level == 3:
+                    current_subtopic = title
+                continue
+            current_q = (m_q.group(1) or "").strip().strip('"')
+            answer_lines = []
+            waiting_answer = True
+            continue
+        if current_q is None:
+            continue
+        if waiting_answer:
+            if not stripped:
+                continue
+            m_a = SIMPLE_A_RE.match(stripped)
+            if m_a:
+                waiting_answer = False
+                tail = (m_a.group(1) or "").strip()
+                if tail:
+                    answer_lines.append(tail)
+                continue
+            waiting_answer = False
+            answer_lines.append(line)
+            continue
+        answer_lines.append(line)
+    if current_q is not None and current_q:
+        qas.append(
+            {
+                "q": current_q,
+                "a": "\n".join(answer_lines).strip(),
+                "subtopic": current_subtopic or "",
+            }
+        )
+    return qas
+
+def build_simple_index(notes_dir: str) -> Dict[str, Any]:
+    """
+    Build simple-mode question/answer index from markdown conspects.
+
+    Args:
+        notes_dir: Directory with markdown files.
+
+    Returns:
+        Dict with sources -> list of {id, q, a}.
+    """
+    files = read_markdown_files(notes_dir)
+    sources: Dict[str, List[Dict[str, str]]] = {}
+    for path, text in files.items():
+        qas = extract_simple_qas(text)
+        if not qas:
+            continue
+        source = os.path.basename(path)
+        sources[source] = [
+            {
+                "id": f"{source}#{idx + 1}",
+                "q": qa["q"],
+                "a": qa["a"],
+                "subtopic": qa.get("subtopic", ""),
+            }
+            for idx, qa in enumerate(qas)
+        ]
+    return {"sources": sources, "notes_dir": notes_dir}
 
 def build_content_index(notes_dir: str) -> Dict[str, Any]:
     """

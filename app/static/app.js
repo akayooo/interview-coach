@@ -13,6 +13,14 @@ const sourcePicker = $("sourcePicker");
 const sourcesDrawer = $("sourcesDrawer");
 const sourcesBackdrop = $("sourcesBackdrop");
 const btnCloseSources = $("btnCloseSources");
+const sourceTitle = $("sourceTitle");
+const weightFooter = $("weightFooter");
+const weightTotal = $("weightTotal");
+const weightHint = $("weightHint");
+
+const modeToggle = $("modeToggle");
+const modeLabelSmart = $("modeLabelSmart");
+const modeLabelSimple = $("modeLabelSimple");
 
 const feed = $("feed");
 const feedCard = $("feedCard");
@@ -21,6 +29,7 @@ const meta = $("meta");
 const hint = $("hint");
 
 const btnStart = $("btnStart");
+const btnSkip = $("btnSkip");
 const btnSend = $("btnSend");
 const btnClear = $("btnClear");
 const btnMic = $("btnMic");
@@ -46,8 +55,13 @@ let stepLabel = "";
 let interactionEnabled = false;
 let analysisLocked = false;
 let hasStarted = false;
-let availableSources = [];
-let selectedSources = [];
+let mode = "smart";
+let availableSourcesSmart = [];
+let availableSourcesSimple = [];
+let simpleCounts = {};
+let selectedSourcesSmart = [];
+let selectedSourcesSimple = [];
+let simpleWeights = {};
 
 function renderMarkdown(md){
   if (window.marked && window.DOMPurify){
@@ -62,13 +76,213 @@ function escapeHtml(s){
   return (s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
 }
 
+const decodeHtml = (() => {
+  const el = document.createElement("textarea");
+  return (value) => {
+    el.innerHTML = value ?? "";
+    return el.value;
+  };
+})();
+
 function addMathStyling(html){
   if (!html) return "";
   const blockRe = /\$\$(.+?)\$\$/gs;
   const inlineRe = /(^|[^\\])\$(.+?)\$/g;
-  let out = html.replace(blockRe, (_, expr) => `<div class="math block">${expr}</div>`);
-  out = out.replace(inlineRe, (_, lead, expr) => `${lead}<span class="math">${expr}</span>`);
+  const canRender = window.katex && typeof window.katex.renderToString === "function";
+
+  let out = html.replace(blockRe, (_, expr) => {
+    if (canRender){
+      try {
+        const rendered = katex.renderToString(decodeHtml(expr).trim(), {
+          displayMode: true,
+          throwOnError: false,
+        });
+        return `<div class="math block katex-block">${rendered}</div>`;
+      } catch (err){
+        return `<div class="math block">${expr}</div>`;
+      }
+    }
+    return `<div class="math block">${expr}</div>`;
+  });
+
+  out = out.replace(inlineRe, (_, lead, expr) => {
+    if (canRender){
+      try {
+        const rendered = katex.renderToString(decodeHtml(expr).trim(), {
+          displayMode: false,
+          throwOnError: false,
+        });
+        return `${lead}<span class="math katex-inline">${rendered}</span>`;
+      } catch (err){
+        return `${lead}<span class="math">${expr}</span>`;
+      }
+    }
+    return `${lead}<span class="math">${expr}</span>`;
+  });
+
   return out;
+}
+
+function notesLabel(){
+  return mode === "simple" ? "ответ" : "конспект";
+}
+
+function updateNotesToggle(expanded){
+  const label = notesLabel();
+  btnToggleNotes.textContent = expanded ? `Скрыть ${label}` : `Показать ${label}`;
+}
+
+function updateStartLabel(){
+  if (mode === "simple"){
+    btnStart.textContent = hasStarted ? "Далее" : "Начать";
+    if (btnSkip){
+      const shouldShow = hasStarted && interactionEnabled;
+      btnSkip.classList.toggle("hidden", !shouldShow);
+      btnSkip.disabled = !interactionEnabled;
+    }
+  } else {
+    btnStart.textContent = "Начать";
+    if (btnSkip){
+      btnSkip.classList.add("hidden");
+      btnSkip.disabled = true;
+    }
+  }
+}
+
+function updateModeUI(){
+  document.body.classList.toggle("mode-simple", mode === "simple");
+  modeLabelSmart?.classList.toggle("active", mode === "smart");
+  modeLabelSimple?.classList.toggle("active", mode === "simple");
+  if (modeToggle) modeToggle.checked = mode === "simple";
+  input.placeholder = mode === "simple"
+    ? "Сообщение…"
+    : "Ответ…  (Ctrl+Enter / ⌘+Enter — отправить)";
+  updateStartLabel();
+  showPrestartCard();
+  renderSourcePicker();
+  updateInteractionState();
+}
+
+function getAvailableSources(){
+  return mode === "simple" ? availableSourcesSimple : availableSourcesSmart;
+}
+
+function getSelectedSources(){
+  return mode === "simple" ? selectedSourcesSimple : selectedSourcesSmart;
+}
+
+function normalizeSimpleWeights(){
+  if (!selectedSourcesSimple.length) return;
+  let total = selectedSourcesSimple.reduce((sum, s) => {
+    const val = Number.isFinite(simpleWeights[s]) ? simpleWeights[s] : 0;
+    return sum + val;
+  }, 0);
+  if (total <= 0){
+    const base = Math.floor(100 / selectedSourcesSimple.length);
+    let remainder = 100 - base * selectedSourcesSimple.length;
+    selectedSourcesSimple.forEach((s) => {
+      simpleWeights[s] = base + (remainder > 0 ? 1 : 0);
+      remainder = Math.max(0, remainder - 1);
+    });
+    return;
+  }
+  selectedSourcesSimple.forEach((s) => {
+    const val = Number.isFinite(simpleWeights[s]) ? simpleWeights[s] : 0;
+    simpleWeights[s] = Math.round(val / total * 100);
+  });
+  let diff = 100 - selectedSourcesSimple.reduce((sum, s) => sum + (simpleWeights[s] ?? 0), 0);
+  let i = 0;
+  while (diff !== 0 && selectedSourcesSimple.length){
+    const src = selectedSourcesSimple[i % selectedSourcesSimple.length];
+    if (diff > 0){
+      simpleWeights[src] += 1;
+      diff -= 1;
+    } else if (simpleWeights[src] > 0){
+      simpleWeights[src] -= 1;
+      diff += 1;
+    }
+    i += 1;
+  }
+}
+
+function applyWeightChange(src, value){
+  if (!selectedSourcesSimple.includes(src)) return;
+  const parsed = Number(value);
+  const v = Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : 0;
+  const others = selectedSourcesSimple.filter((s) => s !== src);
+  if (!others.length){
+    simpleWeights[src] = 100;
+    return;
+  }
+  const remaining = 100 - v;
+  let totalOthers = others.reduce((sum, s) => {
+    const val = Number.isFinite(simpleWeights[s]) ? simpleWeights[s] : 0;
+    return sum + val;
+  }, 0);
+  if (totalOthers <= 0){
+    const base = Math.floor(remaining / others.length);
+    let remainder = remaining - base * others.length;
+    others.forEach((s) => {
+      simpleWeights[s] = base + (remainder > 0 ? 1 : 0);
+      remainder = Math.max(0, remainder - 1);
+    });
+  } else {
+    const scaled = {};
+    let allocated = 0;
+    others.forEach((s) => {
+      const base = Number.isFinite(simpleWeights[s]) ? simpleWeights[s] : 0;
+      const val = Math.round(base / totalOthers * remaining);
+      scaled[s] = val;
+      allocated += val;
+    });
+    let diff = remaining - allocated;
+    let i = 0;
+    while (diff !== 0 && others.length){
+      const s = others[i % others.length];
+      if (diff > 0){
+        scaled[s] += 1;
+        diff -= 1;
+      } else if (scaled[s] > 0){
+        scaled[s] -= 1;
+        diff += 1;
+      }
+      i += 1;
+    }
+    others.forEach((s) => { simpleWeights[s] = scaled[s]; });
+  }
+  simpleWeights[src] = v;
+}
+
+function updateWeightTotal(){
+  if (!weightTotal) return;
+  const total = selectedSourcesSimple.reduce((sum, s) => {
+    const val = Number.isFinite(simpleWeights[s]) ? simpleWeights[s] : 0;
+    return sum + val;
+  }, 0);
+  weightTotal.textContent = `${total}%`;
+}
+
+function syncWeightUI(){
+  if (!sourcePicker) return;
+  sourcePicker.querySelectorAll("input.weightRange").forEach((el) => {
+    const src = el.dataset.source;
+    if (!src) return;
+    el.value = simpleWeights[src] ?? 0;
+  });
+  sourcePicker.querySelectorAll("input.weightNumber").forEach((el) => {
+    const src = el.dataset.source;
+    if (!src) return;
+    el.value = simpleWeights[src] ?? 0;
+  });
+  updateWeightTotal();
+}
+
+function getSimpleWeightsPayload(){
+  const payload = {};
+  selectedSourcesSimple.forEach((src) => {
+    payload[src] = simpleWeights[src] ?? 0;
+  });
+  return payload;
 }
 
 function setStatus(agent, step, state, counter){
@@ -85,11 +299,11 @@ function setStatus(agent, step, state, counter){
   pillState.title = `Статус: ${labelText}`;
 
   pillState.style.background =
-    agentState === "running" ? "rgba(34,197,94,.16)" :
-    agentState === "error" ? "rgba(239,68,68,.18)" :
-    "rgba(148,163,184,.16)";
+    agentState === "running" ? "rgba(40,167,69,.14)" :
+    agentState === "error" ? "rgba(224,71,85,.16)" :
+    "var(--brand-soft)";
 
-  if (typeof counter === "number"){
+  if (typeof counter === "number" && mode === "smart"){
     const every = session.analyze_every_n || 30;
     const until = (every - (counter % every)) || every;
     updateQuestionProgress(counter, every, until);
@@ -117,7 +331,7 @@ function setQuestionLoading(agent, step){
     </div>
   `;
   qNotes.classList.add("hidden");
-  btnToggleNotes.textContent = "Показать конспект";
+  updateNotesToggle(false);
   btnToggleNotes.disabled = true;
   btnToggleNotes.classList.add("ghost");
 }
@@ -135,8 +349,41 @@ function setQuestion(topicTitle, sourceFile, question, theory){
   qNotes.innerHTML = hasNotes ? `<div class="md">${renderMarkdown(theory)}</div>` : "";
   if (!hasNotes){
     qNotes.classList.add("hidden");
-    btnToggleNotes.textContent = "Показать конспект";
+    updateNotesToggle(false);
   }
+}
+
+function setSimpleQuestion(sourceFile, question, answer, index, total, remaining, subtopic, repeat, repeatRemaining){
+  const idx = typeof index === "number" ? index : "";
+  qTitle.textContent = idx ? `Вопрос ${idx}` : "Вопрос";
+  const metaParts = [];
+  if (sourceFile) metaParts.push(`Конспект: ${sourceFile}`);
+  const topicLabel = (subtopic || "").trim();
+  if (topicLabel) metaParts.push(`Подтема: ${topicLabel}`);
+  qMeta.textContent = metaParts.length ? metaParts.join(" · ") : "—";
+  if (typeof total === "number" && total > 0){
+    const rem = typeof remaining === "number" ? remaining : "";
+    const stage = repeat ? "Повтор" : "Основной проход";
+    const progressParts = [`${stage}: ${index}/${total}`];
+    if (rem !== ""){
+      progressParts.push(`Осталось ${rem}`);
+    }
+    if (repeat && typeof repeatRemaining === "number"){
+      progressParts.push(`Повторов в очереди ${repeatRemaining}`);
+    }
+    qProgress.textContent = progressParts.join(" · ");
+  } else {
+    qProgress.textContent = "";
+  }
+  const cleanedQuestion = (question || "").replace(/^["“”'`]+/, "").replace(/["“”'`]+$/, "");
+  qBody.innerHTML = `<div class="md">${renderMarkdown(cleanedQuestion)}</div>`;
+
+  const hasAnswer = (answer || "").trim().length > 0;
+  btnToggleNotes.disabled = !hasAnswer;
+  btnToggleNotes.classList.add("ghost");
+  qNotes.innerHTML = hasAnswer ? `<div class="md">${renderMarkdown(answer)}</div>` : "";
+  qNotes.classList.add("hidden");
+  updateNotesToggle(false);
 }
 
 function resolveStatusLabel(agent, step, state){
@@ -161,10 +408,10 @@ btnToggleNotes.addEventListener("click", () => {
   }
   if (qNotes.classList.contains("hidden")){
     qNotes.classList.remove("hidden");
-    btnToggleNotes.textContent = "Скрыть конспект";
+    updateNotesToggle(true);
   } else {
     qNotes.classList.add("hidden");
-    btnToggleNotes.textContent = "Показать конспект";
+    updateNotesToggle(false);
   }
 });
 
@@ -198,6 +445,19 @@ function addUserAnswer(text){
   div.className = "msg user";
   div.innerHTML = `
     <div class="t"><span>Ответ</span><span style="opacity:.75">вы</span></div>
+    <div class="b md">${renderMarkdown(text)}</div>
+  `;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+  updateEmptyState();
+}
+
+function addChatMessage(role, text){
+  const div = document.createElement("div");
+  const isUser = role === "user";
+  div.className = `msg chat ${isUser ? "user" : "assistant"}`;
+  div.innerHTML = `
+    <div class="t"><span>Чат</span><span style="opacity:.75">${isUser ? "вы" : "LLM"}</span></div>
     <div class="b md">${renderMarkdown(text)}</div>
   `;
   feed.appendChild(div);
@@ -281,6 +541,14 @@ btnDebug.addEventListener("click", openDrawer);
 btnCloseDebug.addEventListener("click", closeDrawer);
 drawerBackdrop.addEventListener("click", closeDrawer);
 
+modeToggle?.addEventListener("change", () => {
+  const newMode = modeToggle.checked ? "simple" : "smart";
+  if (newMode === mode) return;
+  mode = newMode;
+  resetSession(true);
+  updateModeUI();
+});
+
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeDrawer();
 });
@@ -293,6 +561,7 @@ function connect(){
     setStatus("Session", "Ждет запуска", "idle");
     interactionEnabled = false;
     updateInteractionState();
+    updateStartLabel();
     btnStart.disabled = false;
     closeSources();
   };
@@ -305,7 +574,15 @@ function connect(){
       subtitle.textContent = msg.has_llm ? `Model: ${msg.model}` : "No LLM (set OPENROUTER_API_KEY)";
       hint.textContent = "";
       showPrestartCard();
-      availableSources = msg.sources || [];
+      availableSourcesSmart = msg.sources || [];
+      availableSourcesSimple = msg.simple_sources || [];
+      simpleCounts = msg.simple_counts || {};
+      selectedSourcesSmart = selectedSourcesSmart.filter((s) => availableSourcesSmart.includes(s));
+      selectedSourcesSimple = selectedSourcesSimple.filter((s) => availableSourcesSimple.includes(s));
+      if (!selectedSourcesSimple.length && availableSourcesSimple.length){
+        selectedSourcesSimple = [...availableSourcesSimple];
+      }
+      normalizeSimpleWeights();
       renderSourcePicker();
       sttEnabled = Boolean(msg.has_stt);
       btnMic.title = sttEnabled ? "Голосовой ввод" : "Голосовой ввод недоступен";
@@ -348,12 +625,50 @@ function connect(){
       closeSources();
     }
 
+    if (msg.type === "simple_question"){
+      hasStarted = true;
+      setSimpleQuestion(
+        msg.source_file,
+        msg.question,
+        msg.answer,
+        msg.index,
+        msg.total,
+        msg.remaining,
+        msg.subtopic,
+        msg.repeat ?? false,
+        msg.repeat_remaining ?? 0
+      );
+      hint.textContent = "Можно обсудить ответ в чате";
+      interactionEnabled = true;
+      updateInteractionState();
+      btnStart.disabled = false;
+      closeSources();
+    }
+
+    if (msg.type === "simple_done"){
+      hasStarted = true;
+      qTitle.textContent = "Вопросы закончились";
+      qMeta.textContent = "";
+      qProgress.textContent = "";
+      qBody.innerHTML = `<div class="md">${renderMarkdown(msg.reason || "Нет доступных вопросов.")}</div>`;
+      qNotes.classList.add("hidden");
+      updateNotesToggle(false);
+      btnToggleNotes.disabled = true;
+      interactionEnabled = false;
+      updateInteractionState();
+      btnStart.disabled = true;
+    }
+
     if (msg.type === "message"){
       if (msg.role === "user"){
         addUserAnswer(msg.body || "");
       } else if (msg.role === "system"){
         addAnalysis(msg.title || "Система", msg.body || "");
       }
+    }
+
+    if (msg.type === "chat"){
+      addChatMessage(msg.role, msg.text || "");
     }
 
     if (msg.type === "feedback"){
@@ -369,6 +684,7 @@ function connect(){
     subtitle.textContent = "Disconnected (refresh page)";
     interactionEnabled = false;
     updateInteractionState();
+    updateStartLabel();
     btnStart.disabled = true;
     closeSources();
   };
@@ -384,7 +700,11 @@ function sendAnswer(){
   const text = input.value.trim();
   if (!text) return;
   try {
-    ws?.send(JSON.stringify({type:"answer", text}));
+    if (mode === "simple"){
+      ws?.send(JSON.stringify({type:"simple_chat", text}));
+    } else {
+      ws?.send(JSON.stringify({type:"answer", text}));
+    }
   } finally {
     input.value = "";
     autosize();
@@ -401,46 +721,78 @@ input.addEventListener("keydown", (e) => {
   }
 });
 
-btnNew.addEventListener("click", () => {
+function resetSession(sendReset){
   feed.innerHTML = "";
   events.innerHTML = "";
   showPrestartCard();
-  ws.send(JSON.stringify({type:"reset"}));
+  if (sendReset && ws && ws.readyState === WebSocket.OPEN){
+    ws.send(JSON.stringify({type:"reset"}));
+  }
   updateEmptyState();
+  hasStarted = false;
+  analysisLocked = false;
   interactionEnabled = false;
   updateInteractionState();
+  updateStartLabel();
   btnStart.disabled = false;
   closeSources();
+}
+
+btnNew.addEventListener("click", () => {
+  resetSession(true);
 });
 
 btnStart.addEventListener("click", () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (mode === "simple"){
+    if (!hasStarted){
+      hasStarted = true;
+      updateStartLabel();
+      setStatus("SimpleMode", "Старт…", "running");
+      setQuestionLoading("SimpleMode", "Готовлю вопрос…");
+      ws.send(JSON.stringify({type:"start", mode:"simple", sources: selectedSourcesSimple, weights: getSimpleWeightsPayload()}));
+    } else {
+      ws.send(JSON.stringify({type:"next", mode:"simple", weights: getSimpleWeightsPayload()}));
+    }
+    btnStart.disabled = false;
+    closeSources();
+    return;
+  }
   hasStarted = true;
   setStatus("Session", "Подключение…", "running");
   setQuestionLoading("Server", "Готовлю вопрос…");
-  ws.send(JSON.stringify({type:"start", sources: selectedSources}));
+  ws.send(JSON.stringify({type:"start", mode:"smart", sources: selectedSourcesSmart}));
   btnStart.disabled = true;
   closeSources();
 });
 
+btnSkip?.addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (mode !== "simple" || !hasStarted) return;
+  interactionEnabled = false;
+  updateInteractionState();
+  ws.send(JSON.stringify({type: "simple_skip"}));
+});
+
 function updateInteractionState(){
-  const enabled = interactionEnabled && !analysisLocked;
+  const enabled = interactionEnabled && (mode === "simple" || !analysisLocked);
   input.disabled = !enabled;
   updateSendClearDisabled();
   updateMicDisabled();
   if (!interactionEnabled){
     btnMic.classList.remove("listening", "loading");
   }
+  updateStartLabel();
 }
 
 function updateSendClearDisabled(){
-  const shouldDisable = !interactionEnabled || analysisLocked || recording || transcribing;
+  const shouldDisable = !interactionEnabled || recording || transcribing || (mode === "smart" && analysisLocked);
   btnSend.disabled = shouldDisable;
   btnClear.disabled = shouldDisable;
 }
 
 function updateMicDisabled(){
-  const shouldDisable = !sttEnabled || !interactionEnabled || analysisLocked;
+  const shouldDisable = !sttEnabled || !interactionEnabled || (mode === "smart" && analysisLocked);
   btnMic.disabled = shouldDisable;
 }
 
@@ -448,37 +800,126 @@ function renderSourcePicker(){
   if (!sourcePicker) return;
   sourcePicker.innerHTML = "";
   sourcePicker.classList.add("sourcePicker");
-  if (!availableSources.length){
+  const sources = getAvailableSources();
+  if (!sources.length){
     sourcePicker.classList.add("hidden");
+    if (sourceTitle){
+      sourceTitle.textContent = mode === "simple"
+        ? "Нет вопросов в формате Simple."
+        : "Нет доступных конспектов.";
+    }
+    weightFooter?.classList.add("hidden");
     return;
   }
   sourcePicker.classList.remove("hidden");
   const list = document.createElement("div");
   list.className = "sourceList";
 
-  availableSources.forEach((src) => {
+  if (sourceTitle){
+    sourceTitle.textContent = mode === "simple"
+      ? "Выбери конспекты и веса (всего 100%):"
+      : "Выбери конспекты (опционально):";
+  }
+  if (mode === "simple"){
+    weightFooter?.classList.remove("hidden");
+  } else {
+    weightFooter?.classList.add("hidden");
+  }
+
+  sources.forEach((src) => {
     const id = `src_${src.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-    const label = document.createElement("label");
-    label.className = "sourceItem";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.id = id;
-    cb.value = src;
-    cb.checked = selectedSources.includes(src);
-    cb.addEventListener("change", () => {
-      if (cb.checked){
-        if (!selectedSources.includes(src)) selectedSources.push(src);
-      } else {
-        selectedSources = selectedSources.filter((s) => s !== src);
-      }
-    });
-    label.appendChild(cb);
-    const span = document.createElement("span");
-    span.textContent = src;
-    label.appendChild(span);
-    list.appendChild(label);
+    if (mode === "simple"){
+      const row = document.createElement("div");
+      row.className = "sourceRow";
+      const label = document.createElement("label");
+      label.className = "sourceItem";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.id = id;
+      cb.value = src;
+      cb.checked = selectedSourcesSimple.includes(src);
+      cb.addEventListener("change", () => {
+        if (cb.checked){
+          if (!selectedSourcesSimple.includes(src)) selectedSourcesSimple.push(src);
+        } else {
+          selectedSourcesSimple = selectedSourcesSimple.filter((s) => s !== src);
+          if (!selectedSourcesSimple.length){
+            selectedSourcesSimple = [src];
+            cb.checked = true;
+          }
+        }
+        normalizeSimpleWeights();
+        renderSourcePicker();
+      });
+      label.appendChild(cb);
+      const span = document.createElement("span");
+      const count = simpleCounts?.[src];
+      span.textContent = count ? `${src} · ${count} вопр.` : src;
+      label.appendChild(span);
+      row.appendChild(label);
+
+      const weightWrap = document.createElement("div");
+      weightWrap.className = "sourceWeight";
+      const range = document.createElement("input");
+      range.type = "range";
+      range.min = "0";
+      range.max = "100";
+      range.step = "1";
+      range.className = "weightRange";
+      range.dataset.source = src;
+      range.value = simpleWeights[src] ?? 0;
+      range.disabled = !selectedSourcesSimple.includes(src);
+      range.addEventListener("input", () => {
+        applyWeightChange(src, range.value);
+        syncWeightUI();
+      });
+      const num = document.createElement("input");
+      num.type = "number";
+      num.min = "0";
+      num.max = "100";
+      num.step = "1";
+      num.className = "weightNumber";
+      num.dataset.source = src;
+      num.value = simpleWeights[src] ?? 0;
+      num.disabled = !selectedSourcesSimple.includes(src);
+      num.addEventListener("change", () => {
+        applyWeightChange(src, num.value);
+        syncWeightUI();
+      });
+      const suffix = document.createElement("span");
+      suffix.className = "weightSuffix";
+      suffix.textContent = "%";
+      weightWrap.appendChild(range);
+      weightWrap.appendChild(num);
+      weightWrap.appendChild(suffix);
+      row.appendChild(weightWrap);
+      list.appendChild(row);
+    } else {
+      const label = document.createElement("label");
+      label.className = "sourceItem";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.id = id;
+      cb.value = src;
+      cb.checked = selectedSourcesSmart.includes(src);
+      cb.addEventListener("change", () => {
+        if (cb.checked){
+          if (!selectedSourcesSmart.includes(src)) selectedSourcesSmart.push(src);
+        } else {
+          selectedSourcesSmart = selectedSourcesSmart.filter((s) => s !== src);
+        }
+      });
+      label.appendChild(cb);
+      const span = document.createElement("span");
+      span.textContent = src;
+      label.appendChild(span);
+      list.appendChild(label);
+    }
   });
   sourcePicker.appendChild(list);
+  if (mode === "simple"){
+    syncWeightUI();
+  }
 }
 
 function showPrestartCard(){
@@ -488,7 +929,7 @@ function showPrestartCard(){
   qProgress.textContent = "";
   qBody.innerHTML = "";
   qNotes.classList.add("hidden");
-  btnToggleNotes.textContent = "Выбор тем";
+  btnToggleNotes.textContent = mode === "simple" ? "Выбор конспектов" : "Выбор тем";
   btnToggleNotes.disabled = false;
   btnToggleNotes.classList.remove("ghost");
 }
@@ -615,6 +1056,6 @@ sourcesBackdrop.addEventListener("click", closeSources);
 setStatus("Session", "Ждет запуска", "idle");
 interactionEnabled = false;
 updateInteractionState();
-showPrestartCard();
+updateModeUI();
 connect();
 updateEmptyState();
