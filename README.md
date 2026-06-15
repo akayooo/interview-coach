@@ -1,90 +1,90 @@
 # Interview Coach Web
 
-Веб-приложение для подготовки к техническим интервью по вашим конспектам в Markdown.
+A web application for preparing for technical interviews using your own Markdown notes.
 
-Проект работает в двух режимах:
-- `Smart` режим: LLM задает/подбирает вопросы, оценивает ответы, дает фидбек и периодически делает анализ прогресса.
-- `Simple` режим: последовательный/взвешенный проход по заранее заготовленным Q/A из конспектов, с опциональным чат-обсуждением.
+The project works in two modes:
+- `Smart` mode: the LLM asks/selects questions, evaluates answers, gives feedback, and periodically analyzes your progress.
+- `Simple` mode: a sequential/weighted run through pre-prepared Q/A pairs from your notes, with optional chat discussion.
 
 ---
 
-## Оглавление
+## Table of contents
 
-- [1. Что делает проект](#about)
-- [2. Архитектура и поток данных](#architecture)
-- [3. Структура репозитория](#repo-structure)
-- [4. Требования и зависимости](#requirements)
-- [5. Установка и запуск](#setup)
-- [6. Конфигурация через `.env`](#env)
-- [7. Формат конспектов (критично)](#content-format)
-- [8. Как пользоваться приложением](#how-to-use)
-- [9. WebSocket/HTTP протокол](#protocol)
-- [10. Логи, артефакты и где что смотреть](#logs)
-- [11. Разработка и изменение кода](#dev)
-- [12. Частые проблемы и решения](#troubleshooting)
-- [13. Ограничения текущей реализации](#limitations)
-- [14. Краткий чеклист перед собеседованием](#checklist)
+- [1. What the project does](#about)
+- [2. Architecture and data flow](#architecture)
+- [3. Repository structure](#repo-structure)
+- [4. Requirements and dependencies](#requirements)
+- [5. Installation and launch](#setup)
+- [6. Configuration via `.env`](#env)
+- [7. Notes format (critical)](#content-format)
+- [8. How to use the application](#how-to-use)
+- [9. WebSocket/HTTP protocol](#protocol)
+- [10. Logs, artifacts, and where to look](#logs)
+- [11. Development and modifying the code](#dev)
+- [12. Common problems and solutions](#troubleshooting)
+- [13. Limitations of the current implementation](#limitations)
+- [14. Quick checklist before an interview](#checklist)
 
 ---
 
 <a id="about"></a>
-## 1. Что делает проект
+## 1. What the project does
 
-Основная идея: вы тренируете ответы на вопросы по своим же материалам (`conspects/*.md`), а система:
-- выбирает тему и вопрос;
-- показывает контекст из конспекта;
-- принимает ваш ответ (текстом или голосом);
-- оценивает ответ через LLM по рубрике;
-- сохраняет историю в `runs/<timestamp>/history.jsonl`;
-- периодически строит summary по слабым/сильным темам.
+The core idea: you practice answering questions based on your own materials (`conspects/*.md`), and the system:
+- selects a topic and a question;
+- shows context from the notes;
+- accepts your answer (as text or by voice);
+- evaluates the answer via an LLM against a rubric;
+- saves the history to `runs/<timestamp>/history.jsonl`;
+- periodically builds a summary of your weak/strong topics.
 
-Ключевые возможности:
-- единый веб-интерфейс (`FastAPI + static HTML/CSS/JS`);
-- голосовой ввод (`MediaRecorder` в браузере + `faster-whisper` на сервере);
-- выбор источников-конспектов перед стартом;
-- в `Simple` режиме поддержка весов источников (сумма 100%);
-- debug drawer с событиями и метаданными текущей сессии.
+Key features:
+- a single web interface (`FastAPI + static HTML/CSS/JS`);
+- voice input (`MediaRecorder` in the browser + `faster-whisper` on the server);
+- selection of source notes before starting;
+- in `Simple` mode, support for source weights (summing to 100%);
+- a debug drawer with the events and metadata of the current session.
 
 ---
 
 <a id="architecture"></a>
-## 2. Архитектура и поток данных
+## 2. Architecture and data flow
 
-### 2.1 Компоненты
+### 2.1 Components
 
-- `app/main.py`: FastAPI entrypoint, HTTP + WebSocket, инициализация индексов/моделей.
-- `app/coach_engine.py`: сессии `Smart` режима, выбор вопросов, оценка, анализ прогресса.
-- `interview_coach_core/parsing.py`: парсер Markdown и построение индексов контента.
-- `interview_coach_core/openrouter.py`: создание LLM-клиентов OpenRouter.
-- `interview_coach_core/stt.py`: загрузка и использование `faster-whisper`.
-- `app/static/*`: клиентская часть (UI, события, WebSocket клиент, voice UX).
+- `app/main.py`: FastAPI entrypoint, HTTP + WebSocket, initialization of indexes/models.
+- `app/coach_engine.py`: `Smart` mode sessions, question selection, evaluation, progress analysis.
+- `interview_coach_core/parsing.py`: Markdown parser and building of content indexes.
+- `interview_coach_core/openrouter.py`: creation of OpenRouter LLM clients.
+- `interview_coach_core/stt.py`: loading and use of `faster-whisper`.
+- `app/static/*`: client side (UI, events, WebSocket client, voice UX).
 
-### 2.2 Поток в Smart режиме
+### 2.2 Flow in Smart mode
 
-1. Клиент подключается к `/ws`.
-2. Сервер отправляет `hello` (флаги `has_llm`, `has_stt`, список источников, конфиг).
-3. Клиент отправляет `start` с `mode: "smart"` и выбранными источниками.
-4. `CoachEngine.start_or_next_question` выбирает тему и вопрос, при необходимости генерирует вопрос/рубрику.
-5. Сервер отправляет `question`.
-6. Клиент отправляет `answer`.
-7. `CoachEngine.submit_answer` вызывает Evaluator LLM с `EVAL_SYSTEM`, валидирует JSON через pydantic.
-8. Сервер отправляет `feedback`, обновляет счетчик, пишет `history.jsonl`.
-9. Каждые `ANALYZE_EVERY_N` ответов запускается `run_analysis` и приходит `analysis`.
+1. The client connects to `/ws`.
+2. The server sends `hello` (flags `has_llm`, `has_stt`, the list of sources, the config).
+3. The client sends `start` with `mode: "smart"` and the selected sources.
+4. `CoachEngine.start_or_next_question` selects a topic and a question, generating a question/rubric if needed.
+5. The server sends `question`.
+6. The client sends `answer`.
+7. `CoachEngine.submit_answer` calls the Evaluator LLM with `EVAL_SYSTEM` and validates the JSON via pydantic.
+8. The server sends `feedback`, updates the counter, and writes to `history.jsonl`.
+9. Every `ANALYZE_EVERY_N` answers, `run_analysis` is launched and an `analysis` message arrives.
 
-### 2.3 Поток в Simple режиме
+### 2.3 Flow in Simple mode
 
-1. Клиент отправляет `start` с `mode: "simple"`, источниками и весами.
-2. Сервер строит `SimpleSessionState` (очереди вопросов по файлам, нормализованные веса).
-3. На `next` выбирается следующий источник по весам и возвращается `simple_question`.
-4. На `simple_skip` текущий вопрос уходит в очередь повторов.
-5. Когда основные вопросы закончились, отдаются вопросы из `skipped_queue`.
-6. После полного завершения сервер шлет `simple_done`.
-7. Сообщения `simple_chat` идут в LLM (если настроен ключ OpenRouter).
+1. The client sends `start` with `mode: "simple"`, the sources, and the weights.
+2. The server builds `SimpleSessionState` (per-file question queues, normalized weights).
+3. On `next`, the next source is chosen by weight and a `simple_question` is returned.
+4. On `simple_skip`, the current question goes into the repeat queue.
+5. When the main questions run out, questions from `skipped_queue` are served.
+6. After the run is fully complete, the server sends `simple_done`.
+7. `simple_chat` messages go to the LLM (if an OpenRouter key is configured).
 
 ---
 
 <a id="repo-structure"></a>
-## 3. Структура репозитория
+## 3. Repository structure
 
 ```text
 .
@@ -114,38 +114,38 @@
 └── requirements.txt
 ```
 
-### 3.1 Что за что отвечает (файлы)
+### 3.1 What is responsible for what (files)
 
-| Путь | Назначение |
+| Path | Purpose |
 |---|---|
-| `app/main.py` | Инициализация приложения, startup-загрузка индексов/моделей, endpoint'ы `/`, `/ws`, `/stt` |
-| `app/coach_engine.py` | Состояние smart-сессии, выбор вопросов, вызов оценщика/аналитика, запись истории |
-| `app/static/app.js` | Логика UI, обработка ws-сообщений, режимы Smart/Simple, голосовой ввод |
-| `app/static/index.html` | Разметка интерфейса (topbar, карточка вопроса, лента, drawers) |
-| `app/static/style.css` | Визуальные стили и responsive-поведение |
-| `interview_coach_core/config.py` | Dataclass-конфиг из env-переменных |
-| `interview_coach_core/parsing.py` | Парсинг markdown, извлечение вопросов, сбор индексов |
-| `interview_coach_core/strategy.py` | Эвристики выбора тем и вопросов |
-| `interview_coach_core/prompts.py` | Системные промпты и robust JSON parser |
-| `interview_coach_core/models.py` | Pydantic-схемы ответов LLM |
-| `interview_coach_core/logging_utils.py` | Работа с `runs/`, JSONL-логированием, агрегацией прогресса |
-| `interview_coach_core/openrouter.py` | Конфигурирование `ChatOpenAI` клиента под OpenRouter |
-| `interview_coach_core/stt.py` | Загрузка whisper-модели и транскрибация аудио |
-| `conspects/*.md` | Источники вопросов/теории для обеих режимов |
-| `runs/` | Артефакты сессий: история, snapshot тем |
+| `app/main.py` | Application initialization, startup loading of indexes/models, the `/`, `/ws`, `/stt` endpoints |
+| `app/coach_engine.py` | Smart session state, question selection, calling the evaluator/analyst, writing history |
+| `app/static/app.js` | UI logic, handling ws messages, Smart/Simple modes, voice input |
+| `app/static/index.html` | Interface markup (topbar, question card, feed, drawers) |
+| `app/static/style.css` | Visual styles and responsive behavior |
+| `interview_coach_core/config.py` | Dataclass config from env variables |
+| `interview_coach_core/parsing.py` | Parsing markdown, extracting questions, building indexes |
+| `interview_coach_core/strategy.py` | Heuristics for selecting topics and questions |
+| `interview_coach_core/prompts.py` | System prompts and a robust JSON parser |
+| `interview_coach_core/models.py` | Pydantic schemas for LLM responses |
+| `interview_coach_core/logging_utils.py` | Working with `runs/`, JSONL logging, progress aggregation |
+| `interview_coach_core/openrouter.py` | Configuring the `ChatOpenAI` client for OpenRouter |
+| `interview_coach_core/stt.py` | Loading the whisper model and transcribing audio |
+| `conspects/*.md` | Sources of questions/theory for both modes |
+| `runs/` | Session artifacts: history, topics snapshot |
 
 ---
 
 <a id="requirements"></a>
-## 4. Требования и зависимости
+## 4. Requirements and dependencies
 
-Минимум:
-- Python 3.9+ (рекомендуется 3.10/3.11);
-- доступ в интернет для вызовов OpenRouter (для `Smart` режима и `Simple chat`);
-- микрофон + браузер с `MediaRecorder` (для голосового ввода);
-- `ffmpeg` в системе для стабильной обработки аудио `faster-whisper`.
+Minimum:
+- Python 3.9+ (3.10/3.11 recommended);
+- internet access for OpenRouter calls (for `Smart` mode and `Simple chat`);
+- a microphone + a browser with `MediaRecorder` (for voice input);
+- `ffmpeg` in the system for stable audio processing with `faster-whisper`.
 
-Python-зависимости (`requirements.txt`):
+Python dependencies (`requirements.txt`):
 - `fastapi>=0.110`
 - `uvicorn[standard]>=0.23`
 - `langchain>=0.2`
@@ -158,55 +158,55 @@ Python-зависимости (`requirements.txt`):
 ---
 
 <a id="setup"></a>
-## 5. Установка и запуск
+## 5. Installation and launch
 
-### 5.1 Быстрый старт
+### 5.1 Quick start
 
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Открыть в браузере:
+Open in your browser:
 - `http://127.0.0.1:8000`
 
-### 5.2 Важно про контент
+### 5.2 Important note about content
 
-При старте приложение всегда читает `NOTES_DIR` (по умолчанию `conspects/`).
-Если в папке нет `*.md` файлов, startup упадет с ошибкой.
+On startup, the application always reads `NOTES_DIR` (default `conspects/`).
+If there are no `*.md` files in the folder, startup will fail with an error.
 
-### 5.3 Если нужен только Simple без оценивания
+### 5.3 If you only need Simple without evaluation
 
-`Simple` режим работает без `OPENROUTER_API_KEY` для показа Q/A.
-Но чат в `Simple` режиме (`simple_chat`) без ключа будет недоступен.
+`Simple` mode works without `OPENROUTER_API_KEY` for showing Q/A.
+But chat in `Simple` mode (`simple_chat`) will be unavailable without a key.
 
 ---
 
 <a id="env"></a>
-## 6. Конфигурация через `.env`
+## 6. Configuration via `.env`
 
-`Config.from_env()` читает следующие переменные:
+`Config.from_env()` reads the following variables:
 
-| Переменная | По умолчанию | Что делает |
+| Variable | Default | What it does |
 |---|---|---|
-| `NOTES_DIR` | `conspects` | Папка с Markdown-конспектами |
-| `RUNS_DIR` | `runs` | Папка для артефактов сессий |
-| `ANALYZE_EVERY_N` | `30` | Частота анализа прогресса в Smart режиме |
-| `MAX_QUESTIONS_PER_SOURCE` | `0` | Лимит вопросов на файл (`0` = без лимита) |
-| `OPENROUTER_API_KEY` | `""` | Ключ OpenRouter |
-| `OPENROUTER_MODEL` | `deepseek/deepseek-chat` | Модель для generation/eval |
-| `APP_HTTP_REFERER` | `http://localhost` | Заголовок `HTTP-Referer` для OpenRouter |
-| `APP_TITLE` | `InterviewCoachWeb` | Заголовок `X-Title` для OpenRouter |
-| `LLM_TIMEOUT_S` | `120` | Таймаут LLM-запроса (сек) |
-| `WHISPER_MODEL` | `large-v3` | Модель `faster-whisper` |
-| `WHISPER_DEVICE` | `cpu` | `cpu` или `cuda` |
-| `WHISPER_COMPUTE_TYPE` | `int8` | Тип вычислений (`int8`, `float16`, ...) |
-| `WHISPER_INITIAL_PROMPT` | (tech prompt) | Подсказка для терминов при STT |
-| `WHISPER_LANGUAGE` | `""` | Язык для STT (`""` = автоопределение) |
-| `WHISPER_BEAM_SIZE` | `2` | Beam size (меньше = быстрее) |
-| `WHISPER_CONDITION_ON_PREV` | `true` | Учитывать предыдущий текст при декодировании |
+| `NOTES_DIR` | `conspects` | Folder with the Markdown notes |
+| `RUNS_DIR` | `runs` | Folder for session artifacts |
+| `ANALYZE_EVERY_N` | `30` | Frequency of progress analysis in Smart mode |
+| `MAX_QUESTIONS_PER_SOURCE` | `0` | Question limit per file (`0` = no limit) |
+| `OPENROUTER_API_KEY` | `""` | OpenRouter key |
+| `OPENROUTER_MODEL` | `deepseek/deepseek-chat` | Model for generation/eval |
+| `APP_HTTP_REFERER` | `http://localhost` | The `HTTP-Referer` header for OpenRouter |
+| `APP_TITLE` | `InterviewCoachWeb` | The `X-Title` header for OpenRouter |
+| `LLM_TIMEOUT_S` | `120` | LLM request timeout (sec) |
+| `WHISPER_MODEL` | `large-v3` | The `faster-whisper` model |
+| `WHISPER_DEVICE` | `cpu` | `cpu` or `cuda` |
+| `WHISPER_COMPUTE_TYPE` | `int8` | Compute type (`int8`, `float16`, ...) |
+| `WHISPER_INITIAL_PROMPT` | (tech prompt) | A hint for terms during STT |
+| `WHISPER_LANGUAGE` | `""` | Language for STT (`""` = auto-detect) |
+| `WHISPER_BEAM_SIZE` | `2` | Beam size (smaller = faster) |
+| `WHISPER_CONDITION_ON_PREV` | `true` | Take the previous text into account during decoding |
 
-Пример `.env`:
+Example `.env`:
 
 ```env
 OPENROUTER_API_KEY=your_openrouter_key
@@ -223,32 +223,32 @@ WHISPER_COMPUTE_TYPE=int8
 ---
 
 <a id="content-format"></a>
-## 7. Формат конспектов (критично)
+## 7. Notes format (critical)
 
-Проект использует два разных способа извлечения контента.
+The project uses two different ways of extracting content.
 
-### 7.1 Формат для Smart режима (`build_content_index`)
+### 7.1 Format for Smart mode (`build_content_index`)
 
-`Smart` темы строятся по секциям `###` или `####`.
+`Smart` topics are built from `###` or `####` sections.
 
-Правила:
-- только уровни заголовков 3 и 4 превращаются в темы;
-- заголовок секции = `topic.title`;
-- текст секции = `topic.theory`;
-- вопросы внутри секции извлекаются эвристиками `extract_questions`.
+Rules:
+- only heading levels 3 and 4 are turned into topics;
+- the section heading = `topic.title`;
+- the section text = `topic.theory`;
+- questions inside a section are extracted by the `extract_questions` heuristics.
 
-`extract_questions` распознает:
-- строки с префиксами `Q:`, `Q -`, `Вопрос:`, `Question:`;
-- пункты списков/нумерации, если есть `?` или начало с `как/почему/что/...`;
-- короткие строки до 200 символов, содержащие `?`.
+`extract_questions` recognizes:
+- lines with the prefixes `Q:`, `Q -`, `Вопрос:`, `Question:`;
+- list/numbered items if they contain `?` or start with `how/why/what/...`;
+- short lines up to 200 characters containing `?`.
 
-### 7.2 Формат для Simple режима (`build_simple_index`)
+### 7.2 Format for Simple mode (`build_simple_index`)
 
-В `Simple` режиме нужны пары вопрос-ответ:
-- заголовок вопроса: `### Вопрос: ...` или `#### Вопрос: ...`;
-- ответ ожидается после строки вида `**Ответ:**`.
+In `Simple` mode, question-answer pairs are required:
+- the question heading: `### Вопрос: ...` or `#### Вопрос: ...`;
+- the answer is expected after a line of the form `**Ответ:**`.
 
-Минимальный шаблон:
+Minimal template:
 
 ```markdown
 ## Вопросы
@@ -257,222 +257,222 @@ WHISPER_COMPUTE_TYPE=int8
 
 #### Вопрос: Что такое overfitting?
 **Ответ:**
-Краткий и структурированный ответ...
+A short and structured answer...
 ```
 
-Для `Simple` режима также сохраняется `subtopic` из ближайшего `###` заголовка.
+For `Simple` mode, the `subtopic` from the nearest `###` heading is also stored.
 
-### 7.3 Практические рекомендации по контенту
+### 7.3 Practical content recommendations
 
-- держите один логический домен на файл (`Python`, `NLP`, `SQL` и т.д.);
-- пишите вопрос максимально конкретно;
-- в ответе указывайте критерии хорошего ответа, а не только определение;
-- избегайте огромных секций без заголовков `###/####`, иначе темы не выделятся.
+- keep one logical domain per file (`Python`, `NLP`, `SQL`, etc.);
+- write the question as specifically as possible;
+- in the answer, state the criteria for a good answer, not just a definition;
+- avoid huge sections without `###/####` headings, otherwise no topics will be extracted.
 
 ---
 
 <a id="how-to-use"></a>
-## 8. Как пользоваться приложением
+## 8. How to use the application
 
-### 8.1 Интерфейс
+### 8.1 Interface
 
-- верхняя панель: статус, переключатель `Smart/Simple`, кнопки `Начать/Далее`, `Новая сессия`, `Отладка`;
-- карточка вопроса: текущий вопрос, источник, прогресс, переключатель показа конспекта/ответа;
-- лента: ответы пользователя, фидбек, анализ, чат;
-- drawer `Выбор тем`: выбор файлов, в `Simple` режиме дополнительно настройка весов.
+- top bar: status, the `Smart/Simple` toggle, the `Start/Next`, `New session`, `Debug` buttons;
+- question card: the current question, source, progress, a toggle to show the notes/answer;
+- feed: the user's answers, feedback, analysis, chat;
+- the `Topic selection` drawer: file selection, and in `Simple` mode additionally weight configuration.
 
-### 8.2 Сценарий Smart режима
+### 8.2 Smart mode scenario
 
-1. Убедитесь, что задан `OPENROUTER_API_KEY`.
-2. Откройте drawer выбора источников и отметьте нужные конспекты (опционально).
-3. Нажмите `Начать`.
-4. Отвечайте текстом или через микрофон.
-5. Смотрите `feedback` после каждого ответа.
-6. Каждые `ANALYZE_EVERY_N` вопросов приходит блок `analysis`.
+1. Make sure `OPENROUTER_API_KEY` is set.
+2. Open the source selection drawer and check the notes you need (optional).
+3. Click `Start`.
+4. Answer by text or via the microphone.
+5. View the `feedback` after each answer.
+6. Every `ANALYZE_EVERY_N` questions, an `analysis` block arrives.
 
-### 8.3 Сценарий Simple режима
+### 8.3 Simple mode scenario
 
-1. Переключите тумблер в `Simple`.
-2. Выберите конспекты и выставьте веса (автонормализация до 100%).
-3. Нажмите `Начать`.
-4. Для следующего вопроса нажимайте `Далее`.
-5. Если вопрос хотите повторить позже, нажмите `Пропустить`.
-6. Используйте поле ввода как чат по текущему вопросу/эталонному ответу.
+1. Switch the toggle to `Simple`.
+2. Select the notes and set the weights (auto-normalized to 100%).
+3. Click `Start`.
+4. Click `Next` for the next question.
+5. If you want to repeat a question later, click `Skip`.
+6. Use the input field as a chat about the current question/reference answer.
 
-### 8.4 Голосовой ввод
+### 8.4 Voice input
 
-Механика:
-- кнопка `🎙️` запускает запись;
-- повторное нажатие останавливает запись;
-- аудио отправляется на `POST /stt`;
-- расшифровка вставляется в поле ввода;
-- затем отправляете обычной кнопкой `Отправить`.
+How it works:
+- the `🎙️` button starts recording;
+- pressing it again stops recording;
+- the audio is sent to `POST /stt`;
+- the transcription is inserted into the input field;
+- then you send it with the usual `Send` button.
 
 ---
 
 <a id="protocol"></a>
-## 9. WebSocket/HTTP протокол
+## 9. WebSocket/HTTP protocol
 
 ### 9.1 HTTP endpoints
 
 - `GET /` -> UI (`index.html`)
 - `POST /stt` -> `{ text, language, duration }`
-- `GET /static/*` -> клиентские ассеты
+- `GET /static/*` -> client assets
 
 ### 9.2 WebSocket endpoint
 
 - `WS /ws`
 
-#### Клиент -> сервер
+#### Client -> server
 
-- `start`: запуск режима (`smart` или `simple`)
-- `answer`: ответ пользователя в `smart`
-- `simple_chat`: сообщение в чат в `simple`
-- `next`: следующий вопрос в `simple`
-- `simple_skip`: пропустить текущий вопрос в `simple`
-- `reset`: сброс сессии, получение нового `hello`
+- `start`: launch a mode (`smart` or `simple`)
+- `answer`: the user's answer in `smart`
+- `simple_chat`: a chat message in `simple`
+- `next`: the next question in `simple`
+- `simple_skip`: skip the current question in `simple`
+- `reset`: reset the session, receive a new `hello`
 
-#### Сервер -> клиент
+#### Server -> client
 
-- `hello`: возможности и конфиг сессии
-- `ready`: пути `run_dir` и `history_path`
-- `status`: статус агента/этапа
-- `event`: служебные события
-- `question`: вопрос smart режима
-- `simple_question`: вопрос simple режима
-- `simple_done`: завершение simple прохода
-- `message`: системные или пользовательские сообщения
-- `chat`: чат-сообщения simple режима
-- `feedback`: оценка ответа в smart режиме
-- `analysis`: периодический анализ прогресса
-- `counter`: значение счетчика ответов
-- `need_input`: сигнал ожидания ввода
+- `hello`: session capabilities and config
+- `ready`: the `run_dir` and `history_path` paths
+- `status`: the agent/stage status
+- `event`: service events
+- `question`: a Smart mode question
+- `simple_question`: a Simple mode question
+- `simple_done`: completion of a Simple run
+- `message`: system or user messages
+- `chat`: Simple mode chat messages
+- `feedback`: evaluation of an answer in Smart mode
+- `analysis`: periodic progress analysis
+- `counter`: the value of the answer counter
+- `need_input`: a signal that input is awaited
 
 ---
 
 <a id="logs"></a>
-## 10. Логи, артефакты и где что смотреть
+## 10. Logs, artifacts, and where to look
 
-На каждую smart-сессию создается каталог:
+A directory is created for each Smart session:
 - `runs/YYYYMMDD_HHMMSS/`
 
-Внутри:
-- `history.jsonl`: полный лог вопросов/ответов/оценок;
-- `topics_snapshot.json`: snapshot доступных тем на момент старта.
+Inside:
+- `history.jsonl`: the full log of questions/answers/evaluations;
+- `topics_snapshot.json`: a snapshot of the available topics at the moment of start.
 
-Формат записи в `history.jsonl` включает:
+The record format in `history.jsonl` includes:
 - `ts`, `n`, `topic_id`, `topic_title`;
 - `question`, `user_answer`, `expected`;
 - `score`, `short_verdict`;
 - `missing_points`, `incorrect_points`, `improvement_tips`, `ideal_answer`;
 - `model`.
 
-Для быстрой диагностики:
-- UI drawer `Отладка` показывает `event` сообщения;
-- там же видны пути `run_dir`/`history_path`.
+For quick diagnostics:
+- the `Debug` UI drawer shows `event` messages;
+- the `run_dir`/`history_path` paths are also visible there.
 
 ---
 
 <a id="dev"></a>
-## 11. Разработка и изменение кода
+## 11. Development and modifying the code
 
-### 11.1 Локальная разработка
+### 11.1 Local development
 
 ```bash
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Изменения:
-- backend (`app/*.py`, `interview_coach_core/*.py`) -> перезагрузятся через `--reload`;
-- frontend (`app/static/*`) -> достаточно refresh страницы.
+Changes:
+- backend (`app/*.py`, `interview_coach_core/*.py`) -> reloaded via `--reload`;
+- frontend (`app/static/*`) -> a page refresh is enough.
 
-### 11.2 Куда вносить изменения по задачам
+### 11.2 Where to make changes for various tasks
 
-- новая логика выбора тем/вопросов -> `interview_coach_core/strategy.py`;
-- изменение промптов оценивания/аналитики -> `interview_coach_core/prompts.py`;
-- новый формат парсинга markdown -> `interview_coach_core/parsing.py`;
-- изменение протокола ws -> `app/main.py` и `app/static/app.js` синхронно;
+- new topic/question selection logic -> `interview_coach_core/strategy.py`;
+- changes to the evaluation/analysis prompts -> `interview_coach_core/prompts.py`;
+- a new markdown parsing format -> `interview_coach_core/parsing.py`;
+- changes to the ws protocol -> `app/main.py` and `app/static/app.js` in sync;
 - UI/UX -> `app/static/index.html`, `app/static/style.css`, `app/static/app.js`.
 
-### 11.3 Тесты
+### 11.3 Tests
 
-Отдельного тестового контура в репозитории сейчас нет.
-Если добавляете функциональность, рекомендуется минимум:
-- unit-тесты для `parsing.py`;
-- smoke-тест ws-сценария `start -> question -> answer`.
+There is currently no separate test suite in the repository.
+If you add functionality, the following minimum is recommended:
+- unit tests for `parsing.py`;
+- a smoke test of the ws scenario `start -> question -> answer`.
 
 ---
 
 <a id="troubleshooting"></a>
-## 12. Частые проблемы и решения
+## 12. Common problems and solutions
 
-### 12.1 `OPENROUTER_API_KEY не задан`
+### 12.1 `OPENROUTER_API_KEY is not set`
 
-Симптом:
-- в Smart режиме система пишет ошибку конфигурации.
+Symptom:
+- in Smart mode, the system reports a configuration error.
 
-Что делать:
-- добавить `OPENROUTER_API_KEY` в `.env`;
-- перезапустить `uvicorn`.
+What to do:
+- add `OPENROUTER_API_KEY` to `.env`;
+- restart `uvicorn`.
 
-### 12.2 Не грузится whisper / `/stt` возвращает 503
+### 12.2 Whisper does not load / `/stt` returns 503
 
-Симптом:
-- `has_stt=false` в `hello`;
-- `/stt` отвечает `Whisper model не загружен`.
+Symptom:
+- `has_stt=false` in `hello`;
+- `/stt` responds `Whisper model not loaded`.
 
-Что делать:
-- проверить `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`;
-- убедиться, что хватает ресурсов для выбранной модели;
-- установить/проверить `ffmpeg`.
+What to do:
+- check `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`;
+- make sure there are enough resources for the chosen model;
+- install/verify `ffmpeg`.
 
-### 12.3 При запуске ошибка про отсутствие markdown
+### 12.3 An error about missing markdown on startup
 
-Симптом:
-- startup падает с ошибкой `Не нашел .md файлов в ...`.
+Symptom:
+- startup fails with the error `No .md files found in ...`.
 
-Что делать:
-- положить `.md` файлы в директорию `NOTES_DIR` (по умолчанию `conspects/`).
+What to do:
+- put `.md` files in the `NOTES_DIR` directory (default `conspects/`).
 
-### 12.4 JSON от LLM иногда ломается
+### 12.4 JSON from the LLM sometimes breaks
 
-Смягчение уже есть в коде:
-- `robust_json_load` пытается выделить JSON-блок;
-- при ошибке запускается recovery-промпт `Верни ТОЛЬКО валидный JSON...`.
+Mitigation already exists in the code:
+- `robust_json_load` tries to extract the JSON block;
+- on error, a recovery prompt `Return ONLY valid JSON...` is launched.
 
-Что дополнительно можно сделать:
-- уменьшить температуру/сменить модель;
-- ужесточить формулировки схемы в `prompts.py`.
+What else can be done:
+- lower the temperature/switch the model;
+- tighten the schema wording in `prompts.py`.
 
-### 12.5 В Simple режиме не появляются вопросы
+### 12.5 No questions appear in Simple mode
 
-Проверьте:
-- есть ли в файлах шаблон `###/#### Вопрос: ...` + `**Ответ:**`;
-- отмечены ли источники в drawer;
-- не пустой ли `simple_index` в `hello`.
+Check:
+- whether the files contain the `###/#### Вопрос: ...` + `**Ответ:**` template;
+- whether sources are checked in the drawer;
+- whether `simple_index` in `hello` is non-empty.
 
 ---
 
 <a id="limitations"></a>
-## 13. Ограничения текущей реализации
+## 13. Limitations of the current implementation
 
-- нет auth/аккаунтов и серверной мультипользовательской модели;
-- нет БД, все хранится в файловой системе;
-- парсер контента основан на эвристиках и чувствителен к структуре Markdown;
-- нет выделенного тестового пакета;
-- нет rate-limit/retry/backoff слоя для LLM API.
+- no auth/accounts and no server-side multi-user model;
+- no database, everything is stored in the file system;
+- the content parser is based on heuristics and is sensitive to the Markdown structure;
+- no dedicated test package;
+- no rate-limit/retry/backoff layer for the LLM API.
 
 ---
 
 <a id="checklist"></a>
-## 14. Краткий чеклист перед собеседованием
+## 14. Quick checklist before an interview
 
-1. Проверить `.env` (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`).
-2. Проверить структуру `conspects/*.md` под оба режима.
-3. Прогнать 30+ вопросов в Smart режиме (минимум 1 цикл анализа).
-4. По `analysis` выбрать слабые темы и пройти их в Simple режиме с повышенным весом.
-5. Просмотреть `runs/*/history.jsonl` и выписать повторяющиеся ошибки.
+1. Check `.env` (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`).
+2. Check the structure of `conspects/*.md` for both modes.
+3. Run 30+ questions in Smart mode (at least 1 analysis cycle).
+4. Based on the `analysis`, select your weak topics and go through them in Simple mode with an increased weight.
+5. Review `runs/*/history.jsonl` and write down recurring mistakes.
 
 ---
 
-Если нужен отдельный README под деплой (Docker/systemd/reverse proxy), лучше вынести его в `docs/DEPLOY.md`, чтобы этот файл оставался ориентированным на локальную разработку и подготовку к интервью.
+If you need a separate README for deployment (Docker/systemd/reverse proxy), it is better to move it to `docs/DEPLOY.md` so that this file stays focused on local development and interview preparation.
